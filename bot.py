@@ -214,7 +214,7 @@ async def do_check(update, text):
 async def start(update, context):
     await update.message.reply_text(
         "⚡ <b>PX PROXY CHECKER</b>\n\n"
-        "Fast proxy validation, format conversion and TXT support.\n\n"
+        "Fast proxy Cheaker tool by @hexazonxhere.\n\n"
         "• ⚡ High-speed concurrent checking\n"
         "• 🔄 Multi-format proxy converter\n"
         "• 📄 Direct TXT auto-checking\n"
