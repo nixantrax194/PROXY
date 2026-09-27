@@ -5,7 +5,8 @@ import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import quote
+from html import escape
+from urllib.parse import quote, urlparse
 
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -29,11 +30,40 @@ PAT = re.compile(r"^(?P<host>[^:\s]+):(?P<port>\d{1,5}):(?P<user>[^:\s]+):(?P<pa
 BOT_USERNAME = "bot"
 
 
+def valid_button_url(value):
+    """Return a Telegram-safe button URL or None."""
+    if not value:
+        return None
+    value = value.strip()
+    try:
+        parsed = urlparse(value)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return value
+    except Exception:
+        pass
+    log.warning("Ignoring invalid button URL: %r", value)
+    return None
+
+
 def menu():
-    owner = InlineKeyboardButton("👑 Owner", url=OWNER_URL) if OWNER_URL else InlineKeyboardButton("👑 Owner", callback_data="owner")
-    channel = InlineKeyboardButton("📢 Channel", url=CHANNEL_URL) if CHANNEL_URL else InlineKeyboardButton("📢 Channel", callback_data="channel")
+    owner_url = valid_button_url(OWNER_URL)
+    channel_url = valid_button_url(CHANNEL_URL)
+
+    owner = (
+        InlineKeyboardButton("👑 Owner", url=owner_url)
+        if owner_url
+        else InlineKeyboardButton("👑 Owner", callback_data="owner")
+    )
+    channel = (
+        InlineKeyboardButton("📢 Channel", url=channel_url)
+        if channel_url
+        else InlineKeyboardButton("📢 Channel", callback_data="channel")
+    )
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚡ Check Proxies", callback_data="check"), InlineKeyboardButton("🔄 Format Converter", callback_data="convert")],
+        [
+            InlineKeyboardButton("⚡ Check Proxies", callback_data="check"),
+            InlineKeyboardButton("🔄 Format Converter", callback_data="convert"),
+        ],
         [owner, channel],
     ])
 
@@ -101,10 +131,21 @@ async def checks(items):
 
 def fmt(r):
     if r["status"] == "INVALID":
-        return f"⚪ <b>INVALID</b>\n📝 <code>{r['proxy']['raw']}</code>\nℹ️ {r['reason']}"
+        raw = escape(str(r["proxy"].get("raw", "")))
+        reason = escape(str(r.get("reason", "")))
+        return f"⚪ <b>INVALID</b>\n📝 <code>{raw}</code>\nℹ️ {reason}"
     if r["status"] == "LIVE":
-        return f"🟢 <b>LIVE</b>\n🌐 <code>{endpoint(r['proxy'])}</code>\n⚡ Latency: <b>{r['latency']} ms</b>\n🔎 Exit IP: <code>{r['ip']}</code>\n📡 Protocol: <b>HTTP/HTTPS</b>"
-    return f"🔴 <b>DEAD</b>\n🌐 <code>{endpoint(r['proxy'])}</code>\nℹ️ {r['reason']}"
+        proxy = escape(endpoint(r["proxy"]))
+        latency = escape(str(r.get("latency", "")))
+        ip = escape(str(r.get("ip", "Unknown")))
+        return (
+            f"🟢 <b>LIVE</b>\n🌐 <code>{proxy}</code>\n"
+            f"⚡ Latency: <b>{latency} ms</b>\n🔎 Exit IP: <code>{ip}</code>\n"
+            "📡 Protocol: <b>HTTP/HTTPS</b>"
+        )
+    proxy = escape(endpoint(r["proxy"]))
+    reason = escape(str(r.get("reason", "")))
+    return f"🔴 <b>DEAD</b>\n🌐 <code>{proxy}</code>\nℹ️ {reason}"
 
 
 def chunks(text, limit=3800):
@@ -136,7 +177,6 @@ async def send_results(update, results, elapsed):
     for c in chunks(body):
         await update.message.reply_text(c, parse_mode=ParseMode.HTML)
 
-    # Return only LIVE entries as a downloadable TXT file.
     live_lines = [r["proxy"]["raw"] for r in results if r["status"] == "LIVE"]
     if live_lines:
         filename = f"@{BOT_USERNAME}____.txt"
@@ -308,7 +348,9 @@ async def buttons(update, context):
 
 
 async def errors(update, context):
-    log.error("Unhandled error: %s", type(context.error).__name__)
+    # Keep the complete Telegram API error in Railway logs.
+    # The exact BadRequest reason identifies the invalid field.
+    log.exception("Unhandled Telegram error: %s", context.error)
 
 
 def main():
